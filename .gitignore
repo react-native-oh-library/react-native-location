@@ -85,5 +85,6 @@ harmony/location/oh_modules/
 **/.idea/
 .rn-build/
 *.tgz
+!example/harmony/hvigor/*.tgz
 oh-package-lock.json5
 example/harmony/entry/src/main/resources/rawfile/
