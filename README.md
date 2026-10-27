@@ -167,8 +167,8 @@ ohpm install
 ### 使用限制
 
 - 真机需开启系统「位置信息」总开关；开关关闭时定位请求报 3301100，映射为 `onWarning`（type 500）
-- 鸿蒙 GNSS 定位最小时间间隔 1 秒、网络定位最小 20 秒，`interval/fastestInterval/maxWaitTime` 低于最小值时按系统最小值生效
-- **后台定位申请顺序**（鸿蒙限制）：`LOCATION_IN_BACKGROUND` 不能与前台定位权限合并到同一次申请——适配层采用两步串行：先申请前台组合（LOCATION + APPROXIMATELY_LOCATION），授权成功后再单独申请后台权限；运行时弹窗仅有「本次使用允许/仅使用期间允许/不允许」三个选项，**「始终允许」只能由用户在系统设置中手动开启**（后台定位的唯一授予路径）
+- 鸿蒙 GNSS 定位最小时间间隔 1 秒、网络定位最小 20 秒，`interval` 低于最小值时按系统最小值生效；`fastestInterval`/`maxWaitTime` 为 Android 调度语义，鸿蒙无对应机制、静默忽略
+- **后台定位申请顺序**（鸿蒙限制）：`LOCATION_IN_BACKGROUND` 不能与前台定位权限合并到同一次申请——适配层采用两步串行：先申请前台组合（LOCATION + APPROXIMATELY_LOCATION），授权成功后再单独发起后台权限申请（该调用在鸿蒙不弹窗、不授予，仅探测后台授权状态）；运行时弹窗仅有「本次使用允许/仅使用期间允许/不允许」三个选项，**「始终允许」只能由用户在系统设置中手动开启**（后台定位的唯一授予路径，代码无法授予）
 - **验证后台权限是否已授予**：`getCurrentPermission()` 返回 `authorizedAlways` 即含后台；也可用命令 `hdc shell atm dump -t -b <bundleName>` 查看 `LOCATION_IN_BACKGROUND` 的 `grantStatus`（0=已授予，-1=未授予）
 - **后台持续定位还需长时任务**：仅获得后台定位权限不足以保证后台运行，应用退后台后可能被系统挂起。需后台定位的业务应自行申请长时任务（`continuousTask`，定位导航类型），申请后通知栏会显示常驻提示
 
@@ -275,25 +275,25 @@ const unsubSig = RNLocation.subscribeToSignificantLocationUpdates((locations) =>
 ### API
 | 名称 | 类型 | 参数类型 | 返回值 | 必填 | 平台 | HarmonyOS平台支持 | 描述 |
 |--------|---------|-----|-------|-------|--------|-----|-----------------|
-| configure | function | options: ConfigureOptions | Promise\<void\> | Yes | iOS/Android | Yes | 配置定位参数，可多次调用只改传入项；配置后运行中的订阅按新参数重启。iOS 专属项与 androidProvider 在鸿蒙端静默忽略，Promise 永远 resolve |
-| requestPermission | function | options: RequestPermissionOptions | Promise\<boolean\> | Yes | iOS/Android | partially | 申请定位权限。鸿蒙映射（两步串行）：第一步申请 LOCATION+APPROXIMATELY_LOCATION；`always` 档在前台授权成功后再单独申请 LOCATION_IN_BACKGROUND（鸿蒙限制：后台定位权限不可与前台权限合并申请）。**注意**：运行时弹窗仅有「本次使用允许/仅使用期间允许/不允许」三个选项，「始终允许」只能由用户在系统设置中手动开启（与 iOS 申请 always 被降级为 whenInUse 的语义一致），未开启时 `always` 档返回 `false` 属预期 |
+| configure | function | options: ConfigureOptions | Promise\<void\> | Yes | iOS/Android | Yes | 配置定位参数，可多次调用只改传入项；配置后运行中的订阅按新参数重启 |
+| requestPermission | function | options: RequestPermissionOptions | Promise\<boolean\> | Yes | iOS/Android | partially | 申请定位权限。鸿蒙端前台档为 LOCATION + APPROXIMATELY_LOCATION 组合申请；`always` 档额外含后台定位，但后台权限仅能由用户在系统设置中手动开启，未开启时返回 `false` 属预期（详见「使用限制」） |
 | checkPermission | function | options: RequestPermissionOptions | Promise\<boolean\> | No | iOS/Android | Yes | 校验当前权限是否满足指定档位（fine/coarse/whenInUse/always） |
-| getCurrentPermission | function | / | Promise\<LocationPermissionStatus\> | No | iOS/Android | partially | 查询当前权限状态。鸿蒙 token 层无法区分「从未申请」与「用户拒绝」，未授权时统一返回 `denied` |
-| subscribeToPermissionUpdates | function | listener: (status: LocationPermissionStatus) => void | Subscription | No | iOS/Android | partially | 订阅权限状态变化。鸿蒙无系统级权限变更推送，事件在每次权限查询/申请后经去重比较发射 |
-| subscribeToLocationUpdates | function | listener: (locations: Location[]) => void | Subscription | Yes | iOS/Android | Yes | 持续订阅位置更新；开始订阅时会先回报 `getLastLocation()` 最后已知位置（对齐 Android 行为） |
+| getCurrentPermission | function | / | Promise\<LocationPermissionStatus\> | No | iOS/Android | partially | 查询当前权限状态。鸿蒙端无法区分「从未申请」与「用户拒绝」，未授权时统一返回 `denied` |
+| subscribeToPermissionUpdates | function | listener: (status: LocationPermissionStatus) => void | Subscription | No | iOS | partially | 订阅权限状态变化（鸿蒙端在每次权限查询/申请后触发） |
+| subscribeToLocationUpdates | function | listener: (locations: Location[]) => void | Subscription | Yes | iOS/Android | Yes | 持续订阅位置更新；开始订阅时会先回报一次最后已知位置 |
 | getLatestLocation | function | options?: GetLatestLocationOptions | Promise\<Location \| null\> | No | iOS/Android | Yes | 单次获取最新位置，超时 resolve 为 `null`（默认 10s，`timeout: null` 表示不超时） |
-| subscribeToHeadingUpdates | function | listener: (heading: Heading) => void | Subscription | No | iOS | partially | 订阅航向变化。鸿蒙以方向传感器 alpha 角（0-360，绕 Z 轴）近似 CLHeading，无 trueHeading/magneticHeading 之分 |
-| subscribeToSignificantLocationUpdates | function | listener: (locations: Location[]) => void | Subscription | No | iOS | partially | 订阅显著位置变化。鸿蒙无对应原生 API，以低功耗（LOW_POWER）+1000m 距离间隔的独立定位请求近似，不受 configure 的 distanceFilter 影响 |
+| subscribeToHeadingUpdates | function | listener: (heading: Heading) => void | Subscription | No | iOS | partially | 订阅航向变化。鸿蒙端为方向传感器航向角（0-360°），无 trueHeading/magneticHeading 之分 |
+| subscribeToSignificantLocationUpdates | function | listener: (locations: Location[]) => void | Subscription | No | iOS | partially | 订阅显著位置变化。鸿蒙端为低功耗近似实现，粒度粗于 iOS，不受 configure 的 distanceFilter 影响 |
 
 > 返回值 `Subscription` 为退订函数 `() => void`，调用即解除订阅并释放原生资源。
 
 ### 事件
 | 名称 | 负载类型 | 平台 | HarmonyOS平台支持 | 描述 |
 |---|---|---|---|---|
-| locationUpdated | Location[] | iOS, Android | Yes | 位置更新事件，负载为数组（JS 侧按 timestamp 排序取最新） |
+| locationUpdated | Location[] | iOS, Android | Yes | 位置更新事件，负载为位置数组 |
 | headingUpdated | { heading: number } | iOS | Yes | 航向更新事件 |
 | authorizationStatusDidChange | LocationPermissionStatus | iOS | Yes | 权限状态变化事件 |
-| onWarning | { message: string, type: string } | iOS, Android | Yes | 原生告警事件。type 沿用 Android 错误码语义：401 参数错误 / 403 无权限（鸿蒙 201 映射）/ 500 定位服务异常（含总开关关闭 3301100）/ 502 航向传感器不可用 |
+| onWarning | { message: string, type: string } | iOS, Android | Yes | 原生告警事件。type 取值：401 参数错误 / 403 无权限 / 500 定位服务异常（含系统定位总开关关闭）/ 502 航向传感器不可用 |
 
 ---
 
@@ -301,17 +301,17 @@ const unsubSig = RNLocation.subscribeToSignificantLocationUpdates((locations) =>
 | 名称 | 参数类型 | 默认值 | 必填 | 平台 | HarmonyOS平台支持 | 描述 |
 |---|---|---|---|---|---|---|
 | distanceFilter | number \| void | 100 | No | iOS, Android | Yes | 触发位置更新回调的最小距离变化（米）。鸿蒙映射为 `distanceInterval` |
-| interval | number \| void | / | No | Android | Yes | 主动定位的期望间隔（毫秒）。鸿蒙映射为 `timeInterval`（秒），与 fastestInterval/maxWaitTime 取三者最小正值 |
-| fastestInterval | number \| void | / | No | Android | Yes | 最快更新间隔（毫秒）。鸿蒙端与 interval 合并换算，无独立对应 |
-| maxWaitTime | number \| void | / | No | Android | Yes | 位置更新最大等待时间（毫秒）。鸿蒙端与 interval 合并换算，无独立对应 |
+| interval | number \| void | / | No | Android | Yes | 主动定位的期望间隔（毫秒）。鸿蒙映射为 `timeInterval`（秒），低于系统下限（GNSS 1s / 网络定位 20s）时按下限生效 |
+| fastestInterval | number \| void | / | No | Android | No | 最快更新间隔（毫秒，Android"限速"语义）。鸿蒙 `timeInterval` 单槽位、无对应调度机制，静默忽略（仅 interval 生效） |
+| maxWaitTime | number \| void | / | No | Android | No | 后台攒批最大等待时间（毫秒，Android"延迟"语义）。鸿蒙无攒批机制，静默忽略（仅 interval 生效） |
 | desiredAccuracy.ios | LocationAccuracyIOS \| void | / | No | iOS | No | iOS 定位精度档位，鸿蒙无对应，静默忽略 |
-| desiredAccuracy.android | LocationPriorityAndroid \| void | / | No | Android | Yes | Android 功耗优先级。鸿蒙映射：`highAccuracy` → ACCURACY（精度优先）；`balancedPowerAccuracy`/`lowPower`/`noPower` → LOW_POWER（低功耗网络定位）；不传时默认 FIRST_FIX |
+| desiredAccuracy.android | LocationPriorityAndroid \| void | / | No | Android | partially | Android 功耗优先级。鸿蒙端仅 `highAccuracy`（精度优先）与 `lowPower`（低功耗网络定位）语义对应；`balancedPowerAccuracy`（平衡档）与 `noPower`（不主动定位）为 Android 调度语义、鸿蒙无对应机制，静默忽略（优先级保持不变）。不传时使用系统默认 |
 | activityType | LocationActivityType \| void | 'other' | No | iOS | No | 用户活动类型，鸿蒙无对应，静默忽略 |
 | androidProvider | AndroidProvider \| void | 'auto' | No | Android | No | Android 定位 provider 选择（auto/playServices/standard），鸿蒙单一系统定位服务，静默忽略 |
 | allowsBackgroundLocationUpdates | boolean \| void | false | No | iOS | No | iOS 后台定位开关。鸿蒙后台定位由 LOCATION_IN_BACKGROUND 权限控制，该配置静默忽略 |
 | pausesLocationUpdatesAutomatically | boolean \| void | true | No | iOS | No | iOS 自动暂停定位，鸿蒙无对应，静默忽略 |
 | showsBackgroundLocationIndicator | boolean \| void | false | No | iOS | No | iOS 后台定位指示器，鸿蒙无对应，静默忽略 |
-| headingFilter | number \| void | 0 | No | iOS | Yes | 航向变化阈值（度），小于该值不触发回调；0 表示不过滤。鸿蒙端已实现（含 0/360 环形差值处理） |
+| headingFilter | number \| void | 0 | No | iOS | Yes | 航向变化阈值（度），变化小于该值不触发回调；0 表示不过滤 |
 | headingOrientation | HeadingOrientation \| void | 'portrait' | No | iOS | No | 航向参考设备方向，鸿蒙无对应，静默忽略 |
 
 ---
@@ -319,8 +319,8 @@ const unsubSig = RNLocation.subscribeToSignificantLocationUpdates((locations) =>
 ### RequestPermissionOptions
 | 名称 | 参数类型 | 默认值 | 必填 | 平台 | HarmonyOS平台支持 | 描述 |
 |---|---|---|---|---|---|---|
-| ios | `'whenInUse' \| 'always' \| 'ignore' \| void` | / | No | iOS | Yes | iOS 权限档位。鸿蒙端：whenInUse → 前台组合权限；always → 前台组合 + 后台定位权限；ignore 跳过 |
-| android | `{ detail: 'fine' \| 'coarse', rationale?: {...} } \| 'ignore' \| void` | / | No | Android | Yes | Android 权限档位与弹窗说明文案。鸿蒙端 detail 参与档位判定（fine 需 authorizedFine，coarse 接受 authorizedFine/authorizedCoarse）；rationale 为透传字段，鸿蒙端忽略 |
+| ios | `'whenInUse' \| 'always' \| void` | / | No | iOS | Yes | iOS 权限档位。鸿蒙端：whenInUse → 前台组合权限；always → 前台组合 + 后台定位权限 |
+| android | `{ detail: 'fine' \| 'coarse', rationale?: {...} } \| void` | / | No | Android | partially | Android 权限档位与弹窗说明文案。鸿蒙端 detail 参与档位判定；rationale 静默忽略 |
 
 ---
 
@@ -363,7 +363,7 @@ const unsubSig = RNLocation.subscribeToSignificantLocationUpdates((locations) =>
 | authorizedWhenInUse | iOS | No | 鸿蒙无该中间态：前台精确权限返回 `authorizedFine` |
 | authorizedFine | Android | Yes | 前台精确权限（LOCATION + APPROXIMATELY_LOCATION 均授权） |
 | authorizedCoarse | Android | Yes | 仅模糊权限（仅 APPROXIMATELY_LOCATION 授权） |
-| denied | iOS, Android | partially | 未授权。鸿蒙 token 层无法区分「从未申请」与「用户拒绝」，统一返回该值 |
+| denied | iOS, Android | partially | 未授权。鸿蒙端无法区分「从未申请」与「用户拒绝」，统一返回该值 |
 | restricted | iOS, Android | Yes | 权限状态查询异常时返回 |
 | notDetermined | iOS | No | 鸿蒙无法区分该状态（与 denied 合并），不返回 |
 
@@ -397,7 +397,6 @@ const unsubSig = RNLocation.subscribeToSignificantLocationUpdates((locations) =>
 ├── dist/                   # JS 构建产物（commonjs/module/typescript）
 ├── example/                # 示例工程
 │    └─ App.tsx             # Demo（覆盖全部 API 与配置项）
-│    └─ TESTING.md          # 真机测试文档（28 用例）
 │    └─ harmony/            # 鸿蒙示例工程
 ├── package.json
 ├── README.md               # 中文安装使用方法

@@ -167,7 +167,7 @@ The content of this document has been verified with the following versions:
 ### Usage Restrictions
 
 - The system "Location" master switch must be enabled on real devices. When the switch is off, location requests report error 3301100, which is mapped to `onWarning` (type 500)
-- On HarmonyOS, the minimum time interval is 1s for GNSS and 20s for network positioning. If `interval/fastestInterval/maxWaitTime` are below the minimum, the system minimum takes effect
+- On HarmonyOS, the minimum time interval is 1s for GNSS and 20s for network positioning. If `interval` is below the minimum, the system minimum takes effect; `fastestInterval`/`maxWaitTime` are Android scheduling semantics with no HarmonyOS equivalent and are silently ignored
 - **Background permission request order** (HarmonyOS restriction): `LOCATION_IN_BACKGROUND` cannot be combined with foreground location permissions in a single request — the adaptation requests them in two sequential steps: first the foreground set (LOCATION + APPROXIMATELY_LOCATION), then the background permission separately after the foreground grant succeeds. The runtime dialog only offers "Allow this time / Allow while in use / Don't allow" — **"Always allow" can only be enabled manually by the user in system Settings** (the only path to grant background location)
 - **Verifying whether background location is granted**: `getCurrentPermission()` returning `authorizedAlways` means background is granted; alternatively use `hdc shell atm dump -t -b <bundleName>` and check the `grantStatus` of `LOCATION_IN_BACKGROUND` (0=granted, -1=not granted)
 - **Background location also requires a continuous task**: holding the background location permission alone does not guarantee background execution — the app process may be suspended when backgrounded. Apps needing background location should request a continuous task (`continuousTask`, location/navigation type) themselves; a persistent notification is shown once requested
@@ -276,25 +276,25 @@ const unsubSig = RNLocation.subscribeToSignificantLocationUpdates((locations) =>
 ### API
 | Name | Type | Parameter Type | Return Value | Required | Platform | HarmonyOS Support | Description |
 |--------|---------|-----|-------|-------|--------|-----|-----------------|
-| configure | function | options: ConfigureOptions | Promise\<void\> | Yes | iOS/Android | Yes | Configures location options; callable multiple times and only provided options are changed. Running subscriptions restart with the new options. iOS-specific options and androidProvider are silently ignored on HarmonyOS; the Promise always resolves |
-| requestPermission | function | options: RequestPermissionOptions | Promise\<boolean\> | Yes | iOS/Android | Partially | Requests location permission. HarmonyOS mapping (two sequential steps): the first step requests LOCATION + APPROXIMATELY_LOCATION; for the `always` tier, LOCATION_IN_BACKGROUND is requested separately after the foreground grant succeeds (HarmonyOS restriction: the background location permission cannot be combined with foreground permissions in one request). **Note**: the runtime dialog only offers "Allow this time / Allow while in use / Don't allow" — "Always allow" can only be enabled manually by the user in system Settings (consistent with iOS semantics where an always request may degrade to whenInUse); returning `false` for the `always` tier when it is not enabled is expected |
+| configure | function | options: ConfigureOptions | Promise\<void\> | Yes | iOS/Android | Yes | Configures location options; callable multiple times and only provided options are changed. Running subscriptions restart with the new options |
+| requestPermission | function | options: RequestPermissionOptions | Promise\<boolean\> | Yes | iOS/Android | Partially | Requests location permission. On HarmonyOS the foreground tier is a combined request for LOCATION + APPROXIMATELY_LOCATION; the `always` tier additionally covers background location, which can only be enabled manually by the user in system Settings — returning `false` when it is not enabled is expected (see "Usage Restrictions") |
 | checkPermission | function | options: RequestPermissionOptions | Promise\<boolean\> | No | iOS/Android | Yes | Checks whether the current permission satisfies the given tier (fine/coarse/whenInUse/always) |
-| getCurrentPermission | function | / | Promise\<LocationPermissionStatus\> | No | iOS/Android | Partially | Returns the current permission status. On HarmonyOS the token layer cannot distinguish "never requested" from "denied by user"; unauthorized always returns `denied` |
-| subscribeToPermissionUpdates | function | listener: (status: LocationPermissionStatus) => void | Subscription | No | iOS/Android | Partially | Subscribes to permission status changes. HarmonyOS has no system-level permission change push; the event is emitted (deduplicated) after each permission query/request |
-| subscribeToLocationUpdates | function | listener: (locations: Location[]) => void | Subscription | Yes | iOS/Android | Yes | Subscribes to continuous location updates. The last known location from `getLastLocation()` is emitted immediately upon subscribing (aligned with Android behavior) |
+| getCurrentPermission | function | / | Promise\<LocationPermissionStatus\> | No | iOS/Android | Partially | Returns the current permission status. On HarmonyOS "never requested" and "denied by user" cannot be distinguished; unauthorized always returns `denied` |
+| subscribeToPermissionUpdates | function | listener: (status: LocationPermissionStatus) => void | Subscription | No | iOS | Partially | Subscribes to permission status changes (on HarmonyOS, triggered after each permission query/request) |
+| subscribeToLocationUpdates | function | listener: (locations: Location[]) => void | Subscription | Yes | iOS/Android | Yes | Subscribes to continuous location updates. The last known location is emitted once immediately upon subscribing |
 | getLatestLocation | function | options?: GetLatestLocationOptions | Promise\<Location \| null\> | No | iOS/Android | Yes | Gets the latest location once; resolves to `null` on timeout (default 10s; `timeout: null` means no timeout) |
-| subscribeToHeadingUpdates | function | listener: (heading: Heading) => void | Subscription | No | iOS | Partially | Subscribes to heading updates. HarmonyOS approximates CLHeading with the orientation sensor alpha angle (0-360, around the Z axis); no trueHeading/magneticHeading variants |
-| subscribeToSignificantLocationUpdates | function | listener: (locations: Location[]) => void | Subscription | No | iOS | Partially | Subscribes to significant location changes. HarmonyOS has no equivalent native API; approximated with an independent low-power (LOW_POWER) request using a 1000m distance interval, unaffected by the configured distanceFilter |
+| subscribeToHeadingUpdates | function | listener: (heading: Heading) => void | Subscription | No | iOS | Partially | Subscribes to heading updates. On HarmonyOS the value is the orientation sensor heading angle (0-360°); no trueHeading/magneticHeading variants |
+| subscribeToSignificantLocationUpdates | function | listener: (locations: Location[]) => void | Subscription | No | iOS | Partially | Subscribes to significant location changes. Approximated on HarmonyOS with a low-power implementation; coarser granularity than iOS, unaffected by the configured distanceFilter |
 
 > The return value `Subscription` is an unsubscribe function `() => void`; calling it removes the subscription and releases native resources.
 
 ### Events
 | Name | Payload | Platform | HarmonyOS Support | Description |
 |---|---|---|---|---|
-| locationUpdated | Location[] | iOS, Android | Yes | Location update event; the payload is an array (JS side sorts by timestamp and takes the latest) |
+| locationUpdated | Location[] | iOS, Android | Yes | Location update event; the payload is an array of locations |
 | headingUpdated | { heading: number } | iOS | Yes | Heading update event |
 | authorizationStatusDidChange | LocationPermissionStatus | iOS | Yes | Permission status change event |
-| onWarning | { message: string, type: string } | iOS, Android | Yes | Native warning event. The type follows the Android error code semantics: 401 invalid argument / 403 no permission (mapped from HarmonyOS 201) / 500 location service error (including master switch off 3301100) / 502 heading sensor unavailable |
+| onWarning | { message: string, type: string } | iOS, Android | Yes | Native warning event. Type values: 401 invalid argument / 403 no permission / 500 location service error (including the system location master switch being off) / 502 heading sensor unavailable |
 
 ---
 
@@ -302,17 +302,17 @@ const unsubSig = RNLocation.subscribeToSignificantLocationUpdates((locations) =>
 | Name | Type | Default | Required | Platform | HarmonyOS Support | Description |
 |---|---|---|---|---|---|---|
 | distanceFilter | number \| void | 100 | No | iOS, Android | Yes | Minimum distance change (meters) before a location callback fires. Mapped to HarmonyOS `distanceInterval` |
-| interval | number \| void | / | No | Android | Yes | Desired active update interval (ms). Mapped to HarmonyOS `timeInterval` (seconds); the smallest positive value among interval/fastestInterval/maxWaitTime wins |
-| fastestInterval | number \| void | / | No | Android | Yes | Fastest update interval (ms). Merged with interval on HarmonyOS; no dedicated equivalent |
-| maxWaitTime | number \| void | / | No | Android | Yes | Maximum wait time for updates (ms). Merged with interval on HarmonyOS; no dedicated equivalent |
+| interval | number \| void | / | No | Android | Yes | Desired active update interval (ms). Mapped to HarmonyOS `timeInterval` (seconds); clamped to the system minimum (GNSS 1s / network positioning 20s) when lower |
+| fastestInterval | number \| void | / | No | Android | No | Fastest update interval (ms, Android "rate-limit" semantics). HarmonyOS `timeInterval` is a single slot with no equivalent scheduling mechanism; silently ignored (only interval applies) |
+| maxWaitTime | number \| void | / | No | Android | No | Maximum batching wait time (ms, Android "delay" semantics). No batching mechanism on HarmonyOS; silently ignored (only interval applies) |
 | desiredAccuracy.ios | LocationAccuracyIOS \| void | / | No | iOS | No | iOS accuracy tier; no HarmonyOS equivalent, silently ignored |
-| desiredAccuracy.android | LocationPriorityAndroid \| void | / | No | Android | Yes | Android power priority. HarmonyOS mapping: `highAccuracy` → ACCURACY (accuracy-first); `balancedPowerAccuracy`/`lowPower`/`noPower` → LOW_POWER (low-power network positioning); defaults to FIRST_FIX when not provided |
+| desiredAccuracy.android | LocationPriorityAndroid \| void | / | No | Android | Partially | Android power priority. On HarmonyOS only `highAccuracy` (accuracy-first) and `lowPower` (low-power network positioning) map semantically; `balancedPowerAccuracy` (balanced) and `noPower` (no active positioning) are Android scheduling semantics with no HarmonyOS equivalent and are silently ignored (priority stays unchanged). System default applies when not provided |
 | activityType | LocationActivityType \| void | 'other' | No | iOS | No | User activity type; no HarmonyOS equivalent, silently ignored |
 | androidProvider | AndroidProvider \| void | 'auto' | No | Android | No | Android provider selection (auto/playServices/standard); HarmonyOS has a single system location service, silently ignored |
 | allowsBackgroundLocationUpdates | boolean \| void | false | No | iOS | No | iOS background location toggle. On HarmonyOS, background location is controlled by the LOCATION_IN_BACKGROUND permission; this option is silently ignored |
 | pausesLocationUpdatesAutomatically | boolean \| void | true | No | iOS | No | iOS automatic pause; no HarmonyOS equivalent, silently ignored |
 | showsBackgroundLocationIndicator | boolean \| void | false | No | iOS | No | iOS background location indicator; no HarmonyOS equivalent, silently ignored |
-| headingFilter | number \| void | 0 | No | iOS | Yes | Heading change threshold (degrees) below which callbacks are suppressed; 0 means no filtering. Implemented on HarmonyOS (including 0/360 wrap-around handling) |
+| headingFilter | number \| void | 0 | No | iOS | Yes | Heading change threshold (degrees); callbacks are suppressed when the change is below it; 0 means no filtering |
 | headingOrientation | HeadingOrientation \| void | 'portrait' | No | iOS | No | Reference device orientation for heading; no HarmonyOS equivalent, silently ignored |
 
 ---
@@ -320,8 +320,8 @@ const unsubSig = RNLocation.subscribeToSignificantLocationUpdates((locations) =>
 ### RequestPermissionOptions
 | Name | Type | Default | Required | Platform | HarmonyOS Support | Description |
 |---|---|---|---|---|---|---|
-| ios | `'whenInUse' \| 'always' \| 'ignore' \| void` | / | No | iOS | Yes | iOS permission tier. On HarmonyOS: whenInUse → foreground permission set; always → foreground set + background location; ignore skips |
-| android | `{ detail: 'fine' \| 'coarse', rationale?: {...} } \| 'ignore' \| void` | / | No | Android | Yes | Android permission tier and rationale dialog text. On HarmonyOS, detail participates in tier checking (fine requires authorizedFine; coarse accepts authorizedFine/authorizedCoarse); rationale is passed through and ignored on HarmonyOS |
+| ios | `'whenInUse' \| 'always' \| void` | / | No | iOS | Yes | iOS permission tier. On HarmonyOS: whenInUse → foreground permission set; always → foreground set + background location |
+| android | `{ detail: 'fine' \| 'coarse', rationale?: {...} } \| void` | / | No | Android | Partially | Android permission tier and rationale dialog text. On HarmonyOS, detail participates in tier checking; rationale is silently ignored |
 
 ---
 
@@ -364,7 +364,7 @@ const unsubSig = RNLocation.subscribeToSignificantLocationUpdates((locations) =>
 | authorizedWhenInUse | iOS | No | No equivalent intermediate state on HarmonyOS: foreground fine permission returns `authorizedFine` |
 | authorizedFine | Android | Yes | Foreground fine permission (both LOCATION and APPROXIMATELY_LOCATION granted) |
 | authorizedCoarse | Android | Yes | Coarse permission only (only APPROXIMATELY_LOCATION granted) |
-| denied | iOS, Android | Partially | Not granted. On HarmonyOS the token layer cannot distinguish "never requested" from "denied by user"; always returns this value |
+| denied | iOS, Android | Partially | Not granted. On HarmonyOS "never requested" and "denied by user" cannot be distinguished; always returns this value |
 | restricted | iOS, Android | Yes | Returned when the permission status query fails |
 | notDetermined | iOS | No | Cannot be distinguished on HarmonyOS (merged with denied); never returned |
 
@@ -398,7 +398,6 @@ const unsubSig = RNLocation.subscribeToSignificantLocationUpdates((locations) =>
 ├── dist/                   # JS build output (commonjs/module/typescript)
 ├── example/                # Example project
 │    └─ App.tsx             # Demo (covers all APIs and options)
-│    └─ TESTING.md          # Real-device test document (28 cases)
 │    └─ harmony/            # HarmonyOS example project
 ├── package.json
 ├── README.md               # Chinese installation and usage guide

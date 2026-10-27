@@ -63,7 +63,7 @@ type RNLocationPermissionStatus =
 /** desiredAccuracy 配置项（与 src/types.ts 对齐）。 */
 interface RNLocationDesiredAccuracy {
   ios?: string;
-  android?: string;   // highAccuracy | balancedPowerAccuracy | lowPower | noPower
+  android?: string;   // highAccuracy | lowPower（鸿蒙消费）；balancedPowerAccuracy | noPower（Android 语义，静默忽略）
 }
 
 /**
@@ -74,8 +74,8 @@ interface RNLocationDesiredAccuracy {
 interface RNLocationConfigureOptions {
   distanceFilter?: number;
   interval?: number;          // 毫秒（Android 语义）
-  fastestInterval?: number;   // 毫秒
-  maxWaitTime?: number;       // 毫秒
+  fastestInterval?: number;   // 毫秒（Android 语义：最快间隔下限；鸿蒙静默忽略）
+  maxWaitTime?: number;       // 毫秒（Android 语义：攒批延迟；鸿蒙静默忽略）
   desiredAccuracy?: RNLocationDesiredAccuracy;
   headingFilter?: number;     // 度（iOS 语义，鸿蒙端用于传感器阈值）
 }
@@ -164,26 +164,12 @@ export class RNLocationTurboModule extends UITurboModule implements TM.RNLocatio
         this.emitWarning('distanceFilter must be a non-negative number', '401');
       }
     }
-    // interval 毫秒 → timeInterval 秒；fastestInterval/maxWaitTime 无独立鸿蒙
-    // 对应，取三者中的最小正值（时间下限由系统保证）。
-    const intervalCandidates: number[] = [];
+    // interval 毫秒 → timeInterval 秒。fastestInterval/maxWaitTime 为 Android
+    // 调度语义（最快间隔下限 / 后台攒批延迟），鸿蒙 timeInterval 单槽位、无对应
+    // 机制，与 iOS 专属项一致静默忽略、不参与取值（避免"取最小"造成跨平台语义
+    // 漂移：Android 上二者是限速器/延迟器，取最小会变成加速器）。时间下限由系统保证。
     if (this.isPositiveMillis(opts.interval)) {
-      intervalCandidates.push(opts.interval as number);
-    }
-    if (this.isPositiveMillis(opts.fastestInterval)) {
-      intervalCandidates.push(opts.fastestInterval as number);
-    }
-    if (this.isPositiveMillis(opts.maxWaitTime)) {
-      intervalCandidates.push(opts.maxWaitTime as number);
-    }
-    if (intervalCandidates.length > 0) {
-      let minInterval = intervalCandidates[0];
-      for (const candidate of intervalCandidates) {
-        if (candidate < minInterval) {
-          minInterval = candidate;
-        }
-      }
-      this.options.interval = minInterval;
+      this.options.interval = opts.interval as number;
     }
     const headingFilter = opts.headingFilter;
     if (headingFilter !== undefined && Number.isFinite(headingFilter) && headingFilter >= 0) {
@@ -197,10 +183,11 @@ export class RNLocationTurboModule extends UITurboModule implements TM.RNLocatio
           this.options.priority = geoLocationManager.LocationRequestPriority.ACCURACY;
         } else if (android === 'lowPower') {
           this.options.priority = geoLocationManager.LocationRequestPriority.LOW_POWER;
-        } else if (android === 'balancedPowerAccuracy' || android === 'noPower') {
-          // noPower → 系统不主动发起定位，鸿蒙以低功耗网络定位近似
-          this.options.priority = geoLocationManager.LocationRequestPriority.LOW_POWER;
-        } else {
+        }
+        // balancedPowerAccuracy（平衡档）与 noPower（不主动定位）为 Android 调度语义，
+        // 鸿蒙无对应机制，与 iOS 专属项一致静默忽略（优先级保持不变，不降级不告警）；
+        // 其余未知值仍告警 401。
+        else if (android !== 'balancedPowerAccuracy' && android !== 'noPower') {
           this.emitWarning(`desiredAccuracy.android was passed an unknown value: ${android}`, '401');
         }
       }
@@ -458,16 +445,15 @@ export class RNLocationTurboModule extends UITurboModule implements TM.RNLocatio
         this.syncStatusAfterRequest();
         return foregroundGranted;
       }
-      // 第二步：前台已授权，单独申请后台定位权限。
-      // 商业版鸿蒙此步不弹窗（dialogShown=false）、不会自动授予——真正的授予路径是
-      // 用户在设置中选「始终允许」；本次调用的返回值即当前后台授权状态的实时探测。
-      const background = await atManager.requestPermissionsFromUser(
-        context, [PERMISSION_BACKGROUND]);
-      const backgroundGranted = background.authResults.length > 0 &&
-        background.authResults[0] === grantedStatus;
+      // 第二步：探测后台授权状态。LOCATION_IN_BACKGROUND 不支持弹窗授予（唯一授予路径
+      // 是用户在设置中选「始终允许」），且 requestPermissionsFromUser 对该权限的返回值在
+      // 部分系统版本上不反映真实 token 状态（手动授予后仍返回 -1/空），导致已开「始终
+      // 允许」时 always 档误报 false。这里改为读 token 权威状态（与 getAuthorizationStatus
+      // 同源）：authorizedAlways 即前台两项 + 后台全部就绪。
+      const status = await this.getAuthorizationStatus();
+      const backgroundGranted = status === 'authorizedAlways';
       hilog.info(0x0000, 'RNLocation',
-        `request step2(background) result=${JSON.stringify(background)} ` +
-        `backgroundGranted=${backgroundGranted}`);
+        `request step2(background) status=${status} backgroundGranted=${backgroundGranted}`);
       this.syncStatusAfterRequest();
       return foregroundGranted && backgroundGranted;
     } catch (error) {
@@ -534,7 +520,14 @@ export class RNLocationTurboModule extends UITurboModule implements TM.RNLocatio
 
   private handleLocationError(error: Object, what: string): void {
     const e = error as BusinessError;
-    const code = e.code;
+    // 部分系统版本 e.code 不为数值 201（错误文本自带 "BussinessError 201: ..." 前缀，
+    // SDK 原文拼写即为 Bussiness），导致 201→403 映射漏命中、误报 500。
+    // 这里先取 code 属性，非有限数值时再从 message 前缀解析，保证映射稳定。
+    let code = Number(e.code);
+    if (!Number.isFinite(code)) {
+      const parsed = /Error (\d+):/.exec(e.message ?? '');
+      code = parsed ? Number(parsed[1]) : NaN;
+    }
     let message = `Location error during ${what}: ${e.message ?? ''}`;
     if (code === 201) {
       // 201 权限未授 → 对齐 Android SecurityException → 403
