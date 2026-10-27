@@ -62,7 +62,7 @@ build/
 *.xcworkspace
 !default.xcworkspace
 xcuserdata
-profile
+/profile
 *.moved-aside
 DerivedData
 
@@ -86,5 +86,6 @@ harmony/location/oh_modules/
 .rn-build/
 *.tgz
 !example/harmony/hvigor/*.tgz
+harmony/react_native_openharmony_release.har
 oh-package-lock.json5
 example/harmony/entry/src/main/resources/rawfile/
