@@ -2,8 +2,7 @@
   "modelVersion": "6.0.1",
   "description": "Please describe the basic information.",
   "dependencies": {
-    "@react-native-ohos/react-native-location--location": "file:../node_modules/@react-native-ohos/react-native-location/harmony/location.har",
-    "@react-native-ohos/react-native-location--react_native_openharmony_release": "file:../node_modules/@react-native-ohos/react-native-location/harmony/react_native_openharmony_release.har"
+    "@react-native-ohos/react-native-location": "file:../node_modules/@react-native-ohos/react-native-location/harmony/location.har"
   },
   "devDependencies": {},
   "overrides": {
@@ -11,3 +10,14 @@
     "@react-native-ohos/react-native-location": "../node_modules/@react-native-ohos/react-native-location/harmony/location.har"
   }
 }
+
+
+
+
+
+
+
+
+
+
+

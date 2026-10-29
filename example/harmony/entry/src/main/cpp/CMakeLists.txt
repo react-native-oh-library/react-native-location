@@ -19,6 +19,18 @@ set(WITH_HITRACE_SYSTRACE 1)
 add_compile_definitions(WITH_HITRACE_SYSTRACE)
 add_compile_options("-Wno-unused-command-line-argument")
 
+# RNOH 0.84.x 的 Debug 构建宏传播缺口：react_renderer_debug 在 Debug 下以 PUBLIC
+# 定义 RN_ENABLE_DEBUG_STRING_CONVERTIBLE，但该定义只传播给链接它的目标
+# （rrc_* / react_renderer_core 等），react_renderer_graphics 不链接它——
+# LinearGradient/RadialGradient::toString 的定义在 graphics 目标内被
+# #if RN_DEBUG_STRING_CONVERTIBLE 裁剪，而带宏目标仍在引用，
+# 导致 libreactnative.so 链接失败（undefined symbol，仅 Debug 复现）。
+# 这里在 add_subdirectory 前全局补齐该宏，保证所有目标闸门一致（与
+# react_renderer_debug/CMakeLists.txt 的 Debug 语义一致；Release 不定义）。
+if(CMAKE_BUILD_TYPE MATCHES "Debug" OR RN_ENABLE_DEBUG_STRING_CONVERTIBLE)
+  add_compile_definitions(RN_ENABLE_DEBUG_STRING_CONVERTIBLE)
+endif()
+
 # RNOH 以源码方式编译（folly/boost/ReactCommon 等三方源码由 RNOH 自己的
 # CMakeLists 管理，本文件不再单独引用其头文件与源文件）。
 add_subdirectory("${RNOH_CPP_DIR}" ./rn)
